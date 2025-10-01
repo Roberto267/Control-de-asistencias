@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Control de Asistencia</title>
+  <link rel="stylesheet" href="styles.css">
+  <script type="module">
+    // ------------------- Importar módulos de Firebase -------------------
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.1/firebase-app.js";
+    import { getFirestore, collection, getDocs } from "https://www.gstatic.com/firebasejs/11.0.1/firebase-firestore.js";
+    import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.0.1/firebase-auth.js";
+
+    // ------------------- Configuración de Firebase (copiada del proyecto en la consola Firebase) -------------------
+    const firebaseConfig = {
+      apiKey: "AIzaSyAQWCuqqR8WPhAGUSDFb_32E1IATKA0ZCk",
+      authDomain: "proyecto-control-asistencias.firebaseapp.com",
+      projectId: "proyecto-control-asistencias",
+      storageBucket: "proyecto-control-asistencias.appspot.com",
+      messagingSenderId: "558101563015",
+      appId: "1:558101563015:web:2ba0586e1c803160701a22",
+      measurementId: "G-KCSE19ZVWX"
+    };
+
+    // ------------------- Inicializar Firebase y sus servicios -------------------
+    const app = initializeApp(firebaseConfig);   // Inicializa la app Firebase
+    const db = getFirestore(app);                // Inicializa Firestore (base de datos)
+    const auth = getAuth(app);                   // Inicializa autenticación
+    const tabla = document.getElementById("tabla-datos"); // Referencia al cuerpo de la tabla HTML
+
+    // ------------------- Funciones auxiliares -------------------
+
+    // Convierte un string de horas ("XhYm") a minutos (entero)
+    function horasAMinutos(horasStr) {
+      if (!horasStr) return 0;
+      const [h, m] = horasStr.replace("m", "").split("h").map(Number);
+      return h * 60 + m;
+    }
+
+    // Convierte minutos a string en formato "XhYm"
+    function minutosAHoras(mins) {
+      const h = Math.floor(mins / 60);
+      const m = mins % 60;
+      return `${h}h${m.toString().padStart(2, "0")}m`;
+    }
+
+    // Ordena un arreglo de meses en orden cronológico (enero → diciembre)
+    function ordenarMeses(mesesArray) {
+      const mesesNum = {
+        enero:1,febrero:2,marzo:3,abril:4,mayo:5,junio:6,
+        julio:7,agosto:8,septiembre:9,octubre:10,noviembre:11,diciembre:12
+      };
+      return mesesArray.sort((a,b)=>{
+        const [mesA,añoA] = a.split(" ");
+        const [mesB,añoB] = b.split(" ");
+        // Ordena primero por año, luego por mes
+        return (parseInt(añoA)-parseInt(añoB)) || (mesesNum[mesA.toLowerCase()]-mesesNum[mesB.toLowerCase()]);
+      });
+    }
+
+    // ------------------- Función principal para cargar los datos -------------------
+    async function cargarDatos(mesSeleccionado=null){
+      // Mensaje de carga inicial
+      tabla.innerHTML="<tr><td colspan='7'>Cargando datos...</td></tr>";
+      try{
+        // Traer todos los documentos de la colección "Asistencia-del-servicio"
+        const snapshot = await getDocs(collection(db,"Asistencia-del-servicio"));
+        
+        // Si no hay documentos, mostrar mensaje
+        if(snapshot.empty){
+          tabla.innerHTML="<tr><td colspan='7'>No hay datos disponibles</td></tr>";
+          return;
+        }
+
+        // Estructuras auxiliares
+        const mesesSet = new Set();   // Para guardar todos los meses distintos
+        const empleados = [];         // Para guardar la lista de empleados
+
+        // Recorrer los documentos de la colección
+        snapshot.forEach(doc=>{
+          const data = doc.data();  // Datos del documento
+          const nombre = data.nombre || doc.id; // Nombre (si no existe, usar id del doc)
+          const meses = data.meses || {};       // Objeto con horas por mes
+          
+          // Guardamos empleado con sus campos
+          empleados.push({
+            nombre,
+            meses,
+            area:data.area||"",
+            carrera:data.carrera||""
+          });
+
+          // Guardamos los meses encontrados en el Set
+          Object.keys(meses).forEach(m=>mesesSet.add(m));
+        });
+
+        // Ordenar meses de forma cronológica
+        const mesesArray = ordenarMeses(Array.from(mesesSet));
+
+        // Si no hay meses disponibles, mostrar mensaje
+        if(mesesArray.length === 0){
+          tabla.innerHTML="<tr><td colspan='7'>No hay meses disponibles</td></tr>";
+          return;
+        }
+
+        // Usar el mes seleccionado, o si no, el último (más reciente)
+        const mesAUsar = mesSeleccionado || mesesArray[mesesArray.length-1];
+
+        // ------------------- Construcción del encabezado -------------------
+        const thead = document.querySelector("thead tr");
+        thead.innerHTML=""; // Limpiar encabezado
+
+        // Columna de nombre del empleado
+        const thEmpleado = document.createElement("th");
+        thEmpleado.textContent="Empleado";
+        thead.appendChild(thEmpleado);
+
+        // Columna de mes con un <select> para elegir mes
+        const thMes = document.createElement("th");
+        const selectMes = document.createElement("select");
+        selectMes.id="mes-selector";
+        mesesArray.forEach(m=>{
+          const option = document.createElement("option");
+          option.value=m;
+          option.textContent=m;
+          if(m===mesAUsar) option.selected=true; // Marcar seleccionado
+          selectMes.appendChild(option);
+        });
+        // Si cambia el select, recargar datos con el nuevo mes
+        selectMes.addEventListener("change",()=>{cargarDatos(selectMes.value)});
+        thMes.appendChild(selectMes);
+        thead.appendChild(thMes);
+
+        // Otras columnas fijas
+        const thTotal=document.createElement("th"); thTotal.textContent="Total Acumulado"; thead.appendChild(thTotal);
+        const thRestante=document.createElement("th"); thRestante.textContent="Horas Restantes"; thead.appendChild(thRestante);
+        const thArea=document.createElement("th"); thArea.textContent="Área"; thead.appendChild(thArea);
+        const thCarrera=document.createElement("th"); thCarrera.textContent="Carrera"; thead.appendChild(thCarrera);
+
+        // ------------------- Cuerpo de la tabla -------------------
+        tabla.innerHTML=""; // Limpiar cuerpo de tabla
+
+        empleados.forEach(emp=>{
+          // 🔹 Si el empleado no tiene carrera, no se muestra en la tabla
+          if(!emp.carrera || emp.carrera.trim()==="") return;
+
+          // Calcular total de minutos en todos los meses
+          const totalMinutos = Object.values(emp.meses)
+            .map(h=>horasAMinutos(h))
+            .reduce((a,b)=>a+b,0);
+
+          // Si nunca trabajó, no mostrar
+          if(totalMinutos===0) return;
+
+          // Construir fila
+          let totalAcumulado=0;
+          let rowHtml=`<td>${emp.nombre}</td>`; // Nombre empleado
+          
+          // Horas del mes seleccionado
+          const horasMes=emp.meses[mesAUsar]||"0h00m";
+          rowHtml+=`<td>${horasMes}</td>`;
+
+          // Calcular total acumulado en todos los meses
+          for(const m of mesesArray){
+            totalAcumulado+=horasAMinutos(emp.meses[m]||"0h00m");
+          }
+
+          // Meta total (480 horas → 480*60 minutos)
+          const metaTotalMinutos=480*60;
+          let horasRestantes=metaTotalMinutos-totalAcumulado;
+          if(horasRestantes<0) horasRestantes=0;
+
+          // Agregar columnas: total acumulado
+          rowHtml+=`<td>${minutosAHoras(totalAcumulado)}</td>`;
+
+          // 🔹 Si ya terminó el servicio, mostrar mensaje en lugar de horas restantes
+          if(horasRestantes===0){
+            rowHtml+=`<td class="terminado">Terminaste el servicio 🎉</td>`;
+          }else{
+            rowHtml+=`<td>${minutosAHoras(horasRestantes)}</td>`;
+          }
+
+          // Agregar área y carrera
+          rowHtml+=`<td>${emp.area}</td>`;
+          rowHtml+=`<td>${emp.carrera}</td>`;
+
+          // Crear la fila y agregarla a la tabla
+          const row=document.createElement("tr");
+          row.innerHTML=rowHtml;
+          tabla.appendChild(row);
+        });
+
+      }catch(error){
+        // En caso de error, mostrar mensaje en la tabla
+        tabla.innerHTML=`<tr><td colspan='7'>Error: ${error.message}</td></tr>`;
+        console.error(error);
+      }
+    }
+
+    // ------------------- Autenticación anónima -------------------
+
+    // Intentar iniciar sesión anónima
+    signInAnonymously(auth).catch(error=>{
+      console.error("Error en autenticación anónima:",error);
+      tabla.innerHTML=`<tr><td colspan='7'>Error de autenticación: ${error.message}</td></tr>`;
+    });
+
+    // Cuando el usuario esté autenticado, cargar datos
+    onAuthStateChanged(auth,user=>{
+      if(user) cargarDatos();
+    });
+  </script>
+</head>
+<body>
+  <div class="header">
+    <!-- Logo izquierda -->
+    <img src="udg_logo.png" alt="Logo UDG">
+
+    <!-- Texto central -->
+    <div class="text">
+      <h2>Laboratorio de Inteligencia Artificial, Optimización,<br>
+      Metaheurística y Tecnologías Sustentables.</h2>
+      <p>CUCEI, Universidad de Guadalajara.</p>
+    </div>
+
+    <!-- Logo derecha -->
+    <img src="cucei_logo.png" alt="Logo CUCEI">
+  </div>
+
+  <h1>📊 Reporte de asistencia de servicio social</h1>
+
+  <table>
+    <thead>
+      <tr></tr> <!-- Encabezado dinámico -->
+    </thead>
+    <tbody id="tabla-datos">
+      <tr><td colspan="7">Cargando datos...</td></tr> <!-- Mensaje inicial -->
+    </tbody>
+  </table>
+</body>
+</html>
