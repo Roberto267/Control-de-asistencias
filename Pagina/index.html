@@ -142,7 +142,7 @@
 
         empleados.forEach(emp=>{
           // 🔹 Si el empleado no tiene carrera, no se muestra en la tabla
-          //if(!emp.carrera || emp.carrera.trim()==="") return;
+          if(!emp.carrera || emp.carrera.trim()==="") return;
 
           // Calcular total de minutos en todos los meses
           const totalMinutos = Object.values(emp.meses)
@@ -239,6 +239,7 @@
   </table>
 </body>
 </html>
+
 
 
 
